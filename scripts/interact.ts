@@ -4,13 +4,11 @@ import path from "path";
 import os from "os";
 
 const PROGRAM_ID = new anchor.web3.PublicKey(
-	"DLrc7vnZPLs3kbUGxFRSZ3LqcHzEzUWuCDjc9qzy6vVA",
+	"DyK22yV8aBuyYSHw9kRnrR2UYBnVDasxczsLSQ2uVpEb",
 );
 const DEVNET_URL = "https://api.devnet.solana.com";
 const IDL_PATH = path.join(__dirname, "../target/idl/simpan_data.json");
 const WALLET_PATH = path.join(os.homedir(), ".config/solana/id.json");
-
-const MAX_INDEX = 99;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -24,7 +22,7 @@ function deriveDataPda(
 ): anchor.web3.PublicKey {
 	const [pda] = anchor.web3.PublicKey.findProgramAddressSync(
 		[
-			Buffer.from("data"),
+			Buffer.from("user-data"),
 			callerPubkey.toBuffer(),
 			new anchor.BN(index).toArrayLike(Buffer, "le", 8),
 		],
@@ -37,7 +35,7 @@ function deriveUserProfilePda(
 	callerPubkey: anchor.web3.PublicKey,
 ): anchor.web3.PublicKey {
 	const [pda] = anchor.web3.PublicKey.findProgramAddressSync(
-		[Buffer.from("akun"), callerPubkey.toBuffer()],
+		[Buffer.from("user-account"), callerPubkey.toBuffer()],
 		PROGRAM_ID,
 	);
 	return pda;
@@ -68,17 +66,17 @@ async function register(
 	step(2, 4, "Mengecek apakah sudah terdaftar...");
 	const exists = await connection.getAccountInfo(profilePda);
 	if (exists) {
-		const profile = await program.account.akunUser.fetch(profilePda);
-		console.log(`       Sudah terdaftar sebagai '${profile.nama}'.`);
+		const profile = await program.account.userAccount.fetch(profilePda);
+		console.log(`       Sudah terdaftar sebagai '${profile.name}'.`);
 		return;
 	}
 	console.log("       Belum terdaftar, lanjut register...");
 
-	step(3, 4, `Mengirim transaksi register_user(name="${name}") ke devnet...`);
+	step(3, 4, `Mengirim transaksi init_account(name="${name}") ke devnet...`);
 	const tx = await program.methods
-		.registerAkun(name)
+		.initializeAccount(name)
 		.accounts({
-			akunUser: profilePda,
+			userAccount: profilePda,
 			caller: callerPubkey,
 			systemProgram: anchor.web3.SystemProgram.programId,
 		})
@@ -86,8 +84,8 @@ async function register(
 	console.log(`       Signature : ${tx}`);
 
 	step(4, 4, "Transaksi dikonfirmasi! Membaca profil...");
-	const profile = await program.account.akunUser.fetch(profilePda);
-	console.log(`\n  Nama       : ${profile.nama}`);
+	const profile = await program.account.userAccount.fetch(profilePda);
+	console.log(`\n  Nama       : ${profile.name}`);
 	console.log(`  Owner      : ${profile.owner.toBase58()}`);
 	console.log(`  Total data : ${profile.total}`);
 	console.log(`\n  Explorer : ${explorerLink(tx)}`);
@@ -111,10 +109,10 @@ async function profile(
 		return;
 	}
 
-	const data = await program.account.akunUser.fetch(profilePda);
-	console.log(`\n  Nama       : ${data.nama}`);
+	const data = await program.account.userAccount.fetch(profilePda);
+	console.log(`\n  Nama       : ${data.name}`);
 	console.log(`  Owner      : ${data.owner.toBase58()}`);
-	console.log(`  Total data : ${data.total}`);
+	console.log(`  Total data : ${data.totalData}`);
 }
 
 async function create(
@@ -138,8 +136,8 @@ async function create(
 		console.log("       Belum register! Jalankan 'register <nama>' dulu.");
 		return;
 	}
-	const profileBefore = await program.account.akunUser.fetch(profilePda);
-	console.log(`       User    : ${profileBefore.nama} (total data: ${profileBefore.total})`);
+	const profileBefore = await program.account.userAccount.fetch(profilePda);
+	console.log(`       User    : ${profileBefore.name} (total data: ${profileBefore.total})`);
 
 	step(3, 5, "Mengecek apakah akun data sudah ada...");
 	const dataExists = await connection.getAccountInfo(pdaAddress);
@@ -149,22 +147,22 @@ async function create(
 	}
 	console.log("       Belum ada, lanjut membuat...");
 
-	step(4, 5, `Mengirim transaksi buat_data(index=${index}, value=${value})...`);
+	step(4, 5, `Mengirim transaksi init_data(index=${index}, value=${value})...`);
 	const balanceBefore = await connection.getBalance(callerPubkey);
 	const tx = await program.methods
-		.buatAkun(new anchor.BN(index), new anchor.BN(value))
+		.initializeData(new anchor.BN(index), new anchor.BN(value))
 		.accounts({
-			akunDataUser: pdaAddress,
-			akunUser:  profilePda,
-			caller:       callerPubkey,
+			userData: pdaAddress,
+			userAccount: profilePda,
+			caller: callerPubkey,
 			systemProgram: anchor.web3.SystemProgram.programId,
 		})
 		.rpc();
 	console.log(`       Signature : ${tx}`);
 
 	step(5, 5, "Dikonfirmasi! Verifikasi data & profil...");
-	const account       = await program.account.dataUser.fetch(pdaAddress);
-	const profileAfter  = await program.account.akunUser.fetch(profilePda);
+	const account       = await program.account.userData.fetch(pdaAddress);
+	const profileAfter  = await program.account.userAccount.fetch(profilePda);
 	const balanceAfter  = await connection.getBalance(callerPubkey);
 	console.log(`       Value tersimpan : ${account.data.toString()}`);
 	console.log(`       Owner           : ${account.owner.toBase58()}`);
@@ -194,7 +192,7 @@ async function read(
 	console.log(`       Akun ditemukan (${exists.data.length} bytes)`);
 
 	step(3, 3, "Membaca data...");
-	const account = await program.account.dataUser.fetch(pdaAddress);
+	const account = await program.account.userData.fetch(pdaAddress);
 	console.log(`\n  Index : ${index}`);
 	console.log(`  Value : ${account.data.toString()}`);
 	console.log(`  Owner : ${account.owner.toBase58()}`);
@@ -221,21 +219,21 @@ async function update(
 	}
 
 	step(3, 5, "Membaca nilai lama...");
-	const before = await program.account.dataUser.fetch(pdaAddress);
+	const before = await program.account.userData.fetch(pdaAddress);
 	console.log(`       Value lama : ${before.data.toString()}`);
 
 	step(4, 5, `Mengirim transaksi update_data(index=${index}, value=${value})...`);
 	const tx = await program.methods
-		.updateAkun(new anchor.BN(index), new anchor.BN(value))
+		.updateData(new anchor.BN(index), new anchor.BN(value))
 		.accounts({
-			akunDataUser: pdaAddress,
-			caller:       callerPubkey,
+			userData: pdaAddress,
+			caller: callerPubkey,
 		})
 		.rpc();
 	console.log(`       Signature : ${tx}`);
 
 	step(5, 5, "Dikonfirmasi! Verifikasi nilai baru...");
-	const after = await program.account.dataUser.fetch(pdaAddress);
+	const after = await program.account.userData.fetch(pdaAddress);
 	console.log(`       Value baru : ${after.data.toString()}`);
 	console.log(`\n  Explorer : ${explorerLink(tx)}`);
 }
@@ -263,23 +261,23 @@ async function hapus(
 	console.log(`       Rent yang dikembalikan: ${lamportsToSol(exists.lamports)} SOL`);
 
 	step(3, 5, "Membaca total data sebelum hapus...");
-	const profileBefore = await program.account.akunUser.fetch(profilePda);
+	const profileBefore = await program.account.userAccount.fetch(profilePda);
 	console.log(`       Total data sekarang : ${profileBefore.total}`);
 
 	step(4, 5, `Mengirim transaksi delete_data(index=${index})...`);
 	const tx = await program.methods
-		.deleteAkun(new anchor.BN(index))
+		.deleteData(new anchor.BN(index))
 		.accounts({
-			akunDataUser: pdaAddress,
-			akunUser:  profilePda,
-			caller:       callerPubkey,
+			userData: pdaAddress,
+			userAccount: profilePda,
+			caller: callerPubkey,
 		})
 		.rpc();
 	console.log(`       Signature : ${tx}`);
 
 	step(5, 5, "Dikonfirmasi! Verifikasi akun terhapus & profil terupdate...");
 	const afterDelete   = await connection.getAccountInfo(pdaAddress);
-	const profileAfter  = await program.account.akunUser.fetch(profilePda);
+	const profileAfter  = await program.account.userAccount.fetch(profilePda);
 	console.log(`       Status akun     : ${afterDelete === null ? "sudah terhapus ✓" : "masih ada"}`);
 	console.log(`       Total data user : ${profileBefore.total} → ${profileAfter.total}`);
 	console.log(`\n  Explorer : ${explorerLink(tx)}`);

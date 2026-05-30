@@ -1,51 +1,78 @@
 use anchor_lang::prelude::*;
 
-declare_id!("DLrc7vnZPLs3kbUGxFRSZ3LqcHzEzUWuCDjc9qzy6vVA");
+declare_id!("DyK22yV8aBuyYSHw9kRnrR2UYBnVDasxczsLSQ2uVpEb");
 
 pub const MAX_INDEX: u64 = 99;
-pub const MAX_NAME_LEN: usize = 99;
+pub const MAX_STRING_LENGTH: usize = 100;
 
 #[error_code]
 pub enum AppError {
-    #[msg("Data tidak boleh nol")]
-    DataNol,
+    #[msg("Index out of bounds")]
+    IndexOutOfBounds,
 
-    #[msg("Data tidak berubah")]
-    DataTidakBerubah,
+    #[msg("String exceeds maximum length")]
+    StringTooLong,
 
-    #[msg("Index lebih dari 99")]
-    IndexLebihDari99,
+    #[msg("Name is empty")]
+    EmptyName,
 
-    #[msg("Nama tidak boleh kosong")]
-    NamaKosong,
+    #[msg("Data is empty")]
+    EmptyData,
 
-    #[msg("Nama terlalu panjang")]
-    NamaTerlaluPanjang
+    #[msg("Data is not changed")]
+    DataNotChanged,
 }
 
 #[account]
-pub struct AkunUser {
-    owner: Pubkey,
-    nama: String,
-    total: u32
+pub struct UserAccount {
+    pub name: String,
+    pub owner: Pubkey,
+    pub total: u32
 }
 
 #[account]
-pub struct DataUser {
-    owner: Pubkey,
-    data: u64
+pub struct UserData {
+    pub owner: Pubkey,
+    pub data: u64
+}
+
+#[event]
+pub struct InitializeAccountEvent {
+    pub name: String,
+    pub owner: Pubkey,
+}
+
+#[event]
+pub struct InitializeDataEvent {
+    pub owner: Pubkey,
+    pub data: u64,
+    pub index: u64
+}
+
+#[event]
+pub struct UpdateDataEvent {
+    pub owner: Pubkey,
+    pub old_data: u64,
+    pub new_data: u64,
+    pub index: u64
+}
+
+#[event]
+pub struct DeleteDataEvent {
+    pub owner: Pubkey,
+    pub index: u64
 }
 
 #[derive(Accounts)]
-pub struct RegisterAkun<'info> {
+pub struct InitializeAccount<'info> {
     #[account(
         init,
-        space = 8 + 32 + 4 + MAX_NAME_LEN + 4,
-        payer = caller,
-        seeds = [b"akun", caller.key().as_ref()],
-        bump
+        seeds = [b"user-account", caller.key().as_ref()],
+        bump,
+        space = 8 + 32 + 4 + 4 + MAX_STRING_LENGTH,
+        payer = caller
     )]
-    pub akun_user: Account<'info, AkunUser>,
+    pub user_account: Account<'info, UserAccount>,
 
     #[account(mut)]
     pub caller: Signer<'info>,
@@ -55,106 +82,145 @@ pub struct RegisterAkun<'info> {
 
 #[derive(Accounts)]
 #[instruction(index: u64)]
-pub struct BuatAkun<'info> {
+pub struct InitializeData<'info> {
     #[account(
         init,
+        seeds = [b"user-data", caller.key().as_ref(), &index.to_le_bytes()],
+        bump,
         space = 8 + 32 + 8,
-        payer = caller,
-        seeds = [b"data", caller.key().as_ref(), &index.to_le_bytes()],
-        bump
+        payer = caller
     )]
-    pub akun_data_user: Account<'info, DataUser>,
+    pub user_data: Account<'info, UserData>,
 
     #[account(mut)]
     pub caller: Signer<'info>,
 
     #[account(
         mut,
-        seeds = [b"akun", caller.key().as_ref()],
+        seeds = [b"user-account", caller.key().as_ref()],
         bump
     )]
-    pub akun_user: Account<'info, AkunUser>,
+    pub user_account: Account<'info, UserAccount>,
 
     pub system_program: Program<'info, System>
 }
 
 #[derive(Accounts)]
 #[instruction(index: u64)]
-pub struct UpdateAkun<'info> {
+pub struct UpdateData<'info> {
     #[account(
         mut,
-        seeds = [b"data", caller.key().as_ref(), &index.to_le_bytes()],
+        seeds = [b"user-data", caller.key().as_ref(), &index.to_le_bytes()],
         bump
     )]
-    pub akun_data_user: Account<'info, DataUser>,
+    pub user_data: Account<'info, UserData>,
 
     #[account(mut)]
-    pub caller: Signer<'info>
+    pub caller: Signer<'info>,
 }
 
 #[derive(Accounts)]
 #[instruction(index: u64)]
-pub struct DeleteAkun<'info> {
+pub struct DeleteData<'info> {
     #[account(
         mut,
-        seeds = [b"data", caller.key().as_ref(), &index.to_le_bytes()],
-        bump
+        seeds = [b"user-data", caller.key().as_ref(), &index.to_le_bytes()],
+        bump,
+        close = caller
     )]
-    pub akun_data_user: Account<'info, DataUser>,
+    pub user_data: Account<'info, UserData>,
 
     #[account(mut)]
     pub caller: Signer<'info>,
 
     #[account(
         mut,
-        seeds = [b"akun", caller.key().as_ref()],
+        seeds = [b"user-account", caller.key().as_ref()],
         bump
     )]
-    pub akun_user: Account<'info, AkunUser>
+    pub user_account: Account<'info, UserAccount>,
 }
 
 #[program]
 pub mod simpan_data {
     use super::*;
-    
-    pub fn register_akun(ctx: Context<RegisterAkun>, nama: String) -> Result<()> {
-        require!(nama.len() > 0, AppError::NamaKosong);
-        require!(nama.len() < MAX_NAME_LEN, AppError::NamaTerlaluPanjang);
+    pub fn initialize_account(ctx: Context<InitializeAccount>, name: String) -> Result<()> {
+        require!(name.len() <= MAX_STRING_LENGTH, AppError::StringTooLong);
+        require!(!name.is_empty(), AppError::EmptyName);
 
-        ctx.accounts.akun_user.nama = nama.clone();
-        ctx.accounts.akun_user.owner = ctx.accounts.caller.key();
-        ctx.accounts.akun_user.total = 0;
-        msg!("Berhasil registrasi akun dengan nama {}", nama);
+        let user_account = &mut ctx.accounts.user_account;
+        user_account.name = name.clone();
+        user_account.owner = ctx.accounts.caller.key();
+        user_account.total = 0;
+
+        emit!(InitializeAccountEvent{
+            name: name,
+            owner: ctx.accounts.caller.key(),
+        });
+
+        msg!("Account initialized successfully for {}", user_account.name);
         Ok(())
     }
 
-    pub fn buat_akun(ctx: Context<BuatAkun>, index: u64, new_data: u64) -> Result<()> {
-        require!(index <= MAX_INDEX, AppError::IndexLebihDari99 );
-        require!(new_data != 0, AppError::DataNol);
-        ctx.accounts.akun_data_user.data = new_data;
-        ctx.accounts.akun_data_user.owner = ctx.accounts.caller.key();
-        ctx.accounts.akun_user.total += 1;
+    pub fn initialize_data(ctx: Context<InitializeData>, index: u64, data: u64) -> Result<()> {
+        require!(index <= MAX_INDEX, AppError::IndexOutOfBounds);
+        require!(data != 0, AppError::EmptyData);
 
-        msg!("Data berhasil dibuat ke {} dengan index {}", new_data, index);
+        let user_data = &mut ctx.accounts.user_data;
+        user_data.owner = ctx.accounts.caller.key();
+        user_data.data = data.clone();
+
+        let user_account = &mut ctx.accounts.user_account;
+        user_account.total += 1;
+
+        emit!(
+            InitializeDataEvent {
+                owner: ctx.accounts.caller.key(),
+                data: data,
+                index: index
+            }
+        );
+
+        msg!("Data initialized successfully at index {} with value {}", index, data);
         Ok(())
     }
 
-    pub fn update_akun(ctx: Context<UpdateAkun>, index: u64, new_data: u64) -> Result<()> {
-        require!(index <= MAX_INDEX, AppError::IndexLebihDari99 );
-        require!(new_data != 0, AppError::DataNol);
-        require!(new_data != ctx.accounts.akun_data_user.data, AppError::DataTidakBerubah);
+    pub fn update_data(ctx: Context<UpdateData>, index: u64, new_data: u64) -> Result<()> {
+        require!(index <= MAX_INDEX, AppError::IndexOutOfBounds);
+        require!(new_data != 0, AppError::EmptyData);
+        require!(ctx.accounts.user_data.data != new_data, AppError::DataNotChanged);
 
-        ctx.accounts.akun_data_user.data = new_data;
+        let user_data = &mut ctx.accounts.user_data;
+        let old_data = user_data.data;
+        user_data.data = new_data.clone();
 
-        msg!("Data berhasil diupdate ke {} pada index {}", new_data, index);
+        emit!(
+            UpdateDataEvent {
+                owner: ctx.accounts.caller.key(),
+                old_data: old_data,
+                new_data: new_data,
+                index: index
+            }
+        );
+
+        msg!("Data at index {} updated successfully from {} to {}", index, old_data, new_data);
         Ok(())
     }
 
-    pub fn delete_akun(ctx: Context<DeleteAkun>, index: u64) -> Result<()> {
-        require!(index <= MAX_INDEX, AppError::IndexLebihDari99 );
-        ctx.accounts.akun_user.total -= 1;
+    pub fn delete_data(ctx: Context<DeleteData>, index: u64) -> Result<()> {
+        require!(index <= MAX_INDEX, AppError::IndexOutOfBounds);
 
-        msg!("Data berhasil dihapus pada index {}", index);
+        let user_account = &mut ctx.accounts.user_account;
+        user_account.total -= 1;
+
+        emit!(
+            DeleteDataEvent {
+                owner: ctx.accounts.caller.key(),
+                index: index
+            }
+        );
+
+        msg!("Data at index {} deleted successfully", index);
         Ok(())
     }
 }
