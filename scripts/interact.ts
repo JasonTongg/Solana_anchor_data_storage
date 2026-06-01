@@ -238,6 +238,54 @@ async function update(
 	console.log(`\n  Explorer : ${explorerLink(tx)}`);
 }
 
+async function transfer(
+	program: any,
+	connection: anchor.web3.Connection,
+	callerPubkey: anchor.web3.PublicKey,
+	recipientAddress: string,
+	solAmount: number,
+) {
+	console.log("\n=== TRANSFER SOL ===");
+
+	step(1, 4, "Memvalidasi alamat penerima...");
+	let recipient: anchor.web3.PublicKey;
+	try {
+		recipient = new anchor.web3.PublicKey(recipientAddress);
+	} catch {
+		console.log("       Alamat penerima tidak valid!");
+		return;
+	}
+	console.log(`       Penerima : ${recipient.toBase58()}`);
+
+	step(2, 4, "Mengecek saldo pengirim...");
+	const balanceBefore = await connection.getBalance(callerPubkey);
+	const lamports = Math.floor(solAmount * anchor.web3.LAMPORTS_PER_SOL);
+	console.log(`       Saldo    : ${lamportsToSol(balanceBefore)} SOL`);
+	console.log(`       Kirim    : ${solAmount} SOL (${lamports} lamports)`);
+	if (balanceBefore < lamports) {
+		console.log("       Saldo tidak cukup!");
+		return;
+	}
+
+	step(3, 4, `Mengirim transaksi transfer_sol(amount=${lamports})...`);
+	const tx = await program.methods
+		.transferSol(new anchor.BN(lamports))
+		.accounts({
+			caller: callerPubkey,
+			recipient,
+			systemProgram: anchor.web3.SystemProgram.programId,
+		})
+		.rpc();
+	console.log(`       Signature : ${tx}`);
+
+	step(4, 4, "Dikonfirmasi! Verifikasi saldo...");
+	const balanceAfter = await connection.getBalance(callerPubkey);
+	console.log(`       Saldo sebelum : ${lamportsToSol(balanceBefore)} SOL`);
+	console.log(`       Saldo sesudah : ${lamportsToSol(balanceAfter)} SOL`);
+	console.log(`       SOL terkirim  : ${solAmount} SOL`);
+	console.log(`\n  Explorer : ${explorerLink(tx)}`);
+}
+
 async function hapus(
 	program: any,
 	connection: anchor.web3.Connection,
@@ -287,12 +335,13 @@ async function hapus(
 
 const USAGE = `
 Penggunaan:
-  yarn interact register <nama>         — daftar user profile
-  yarn interact profile                 — lihat profil user
-  yarn interact create <index> <value>  — buat data baru
-  yarn interact read   <index>          — baca data
-  yarn interact update <index> <value>  — update nilai data
-  yarn interact delete <index>          — hapus data
+  yarn interact register <nama>                  — daftar user profile
+  yarn interact profile                          — lihat profil user
+  yarn interact create <index> <value>           — buat data baru
+  yarn interact read   <index>                   — baca data
+  yarn interact update <index> <value>           — update nilai data
+  yarn interact delete <index>                   — hapus data
+  yarn interact transfer <alamat> <jumlah_sol>   — kirim SOL ke alamat lain
 
 Contoh:
   yarn interact register Jason
@@ -301,16 +350,19 @@ Contoh:
   yarn interact read   0
   yarn interact update 0 99
   yarn interact delete 0
+  yarn interact transfer <RECIPIENT_ADDRESS> 0.01
 `;
 
-const COMMANDS = ["register", "profile", "create", "read", "update", "delete"];
+const COMMANDS = ["register", "profile", "create", "read", "update", "delete", "transfer"];
 
 async function main() {
-	const args    = process.argv.slice(2);
-	const command = args[0];
-	const index   = parseInt(args[1] ?? "0");
-	const value   = parseInt(args[2] ?? "0");
-	const name    = args[1] ?? "";
+	const args      = process.argv.slice(2);
+	const command   = args[0];
+	const index     = parseInt(args[1] ?? "0");
+	const value     = parseInt(args[2] ?? "0");
+	const name      = args[1] ?? "";
+	const recipient = args[1] ?? "";
+	const solAmount = parseFloat(args[2] ?? "0");
 
 	if (!COMMANDS.includes(command)) {
 		console.log(USAGE);
@@ -343,6 +395,7 @@ async function main() {
 		case "read":     await read(program, connection, keypair.publicKey, index); break;
 		case "update":   await update(program, connection, keypair.publicKey, index, value); break;
 		case "delete":   await hapus(program, connection, keypair.publicKey, index); break;
+		case "transfer": await transfer(program, connection, keypair.publicKey, recipient, solAmount); break;
 	}
 }
 

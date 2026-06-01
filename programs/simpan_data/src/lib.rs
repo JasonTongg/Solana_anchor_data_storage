@@ -21,6 +21,9 @@ pub enum AppError {
 
     #[msg("Data is not changed")]
     DataNotChanged,
+
+    #[msg("Amount must be greater than zero")]
+    AmountZero,
 }
 
 #[account]
@@ -61,6 +64,13 @@ pub struct UpdateDataEvent {
 pub struct DeleteDataEvent {
     pub owner: Pubkey,
     pub index: u64
+}
+
+#[event]
+pub struct SolTransferredEvent {
+    pub from: Pubkey,
+    pub to: Pubkey,
+    pub amount: u64,
 }
 
 #[derive(Accounts)]
@@ -117,6 +127,18 @@ pub struct UpdateData<'info> {
 
     #[account(mut)]
     pub caller: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct TransferSol<'info> {
+    #[account(mut)]
+    pub caller: Signer<'info>,
+
+    /// CHECK: recipient is just a wallet address, no data validation needed
+    #[account(mut)]
+    pub recipient: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -204,6 +226,31 @@ pub mod simpan_data {
         );
 
         msg!("Data at index {} updated successfully from {} to {}", index, old_data, new_data);
+        Ok(())
+    }
+
+    pub fn transfer_sol(ctx: Context<TransferSol>, amount: u64) -> Result<()> {
+        require!(amount > 0, AppError::AmountZero);
+
+        anchor_lang::solana_program::program::invoke(
+            &anchor_lang::solana_program::system_instruction::transfer(
+                &ctx.accounts.caller.key(),
+                &ctx.accounts.recipient.key(),
+                amount,
+            ),
+            &[
+                ctx.accounts.caller.to_account_info(),
+                ctx.accounts.recipient.to_account_info(),
+            ],
+        )?;
+
+        emit!(SolTransferredEvent {
+            from: ctx.accounts.caller.key(),
+            to: ctx.accounts.recipient.key(),
+            amount,
+        });
+
+        msg!("Transferred {} lamports from {} to {}", amount, ctx.accounts.caller.key(), ctx.accounts.recipient.key());
         Ok(())
     }
 

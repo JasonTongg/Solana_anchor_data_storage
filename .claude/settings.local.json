@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(wsl -d Ubuntu bash -c \"ls -la /home/jason/solana-development/Solana_anchor_data_storage/target/deploy/simpan_data.so\")"
+      "PowerShell(wsl -d Ubuntu bash -c \"ls -la /home/jason/solana-development/Solana_anchor_data_storage/target/deploy/simpan_data.so\")",
+      "PowerShell(wsl -d Ubuntu bash -c \"find /home/jason -name 'yarn' -o -name 'npm' 2>/dev/null | grep -v node_modules | head -10\")"
     ]
   }
 }
