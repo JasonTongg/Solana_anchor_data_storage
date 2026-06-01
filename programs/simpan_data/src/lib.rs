@@ -24,6 +24,18 @@ pub enum AppError {
 
     #[msg("Amount must be greater than zero")]
     AmountZero,
+
+    #[msg("Insufficient funds in account")]
+    InsufficientFunds,
+
+    #[msg("Withdrawal would drop account below rent-exempt minimum")]
+    BelowRentExempt,
+}
+
+#[account]
+pub struct Vault {
+    pub total_deposited: u64,
+    pub bump: u8,
 }
 
 #[account]
@@ -71,6 +83,20 @@ pub struct SolTransferredEvent {
     pub from: Pubkey,
     pub to: Pubkey,
     pub amount: u64,
+}
+
+#[event]
+pub struct DepositEvent {
+    pub from: Pubkey,
+    pub amount: u64,
+    pub vault_total: u64,
+}
+
+#[event]
+pub struct WithdrawEvent {
+    pub to: Pubkey,
+    pub amount: u64,
+    pub vault_total: u64,
 }
 
 #[derive(Accounts)]
@@ -124,6 +150,51 @@ pub struct UpdateData<'info> {
         bump
     )]
     pub user_data: Account<'info, UserData>,
+
+    #[account(mut)]
+    pub caller: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct InitializeVault<'info> {
+    #[account(
+        init,
+        seeds = [b"vault"],
+        bump,
+        space = 8 + 8 + 1,
+        payer = caller
+    )]
+    pub vault: Account<'info, Vault>,
+
+    #[account(mut)]
+    pub caller: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Deposit<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault"],
+        bump
+    )]
+    pub vault: Account<'info, Vault>,
+
+    #[account(mut)]
+    pub caller: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Withdraw<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault"],
+        bump
+    )]
+    pub vault: Account<'info, Vault>,
 
     #[account(mut)]
     pub caller: Signer<'info>,
@@ -226,6 +297,70 @@ pub mod simpan_data {
         );
 
         msg!("Data at index {} updated successfully from {} to {}", index, old_data, new_data);
+        Ok(())
+    }
+
+    pub fn initialize_vault(ctx: Context<InitializeVault>) -> Result<()> {
+        ctx.accounts.vault.total_deposited = 0;
+        ctx.accounts.vault.bump = ctx.bumps.vault;
+
+        msg!("Vault initialized at {}", ctx.accounts.vault.key());
+        Ok(())
+    }
+
+    pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+        require!(amount > 0, AppError::AmountZero);
+
+        // user → vault: caller is owned by System Program so we use invoke
+        anchor_lang::solana_program::program::invoke(
+            &anchor_lang::solana_program::system_instruction::transfer(
+                &ctx.accounts.caller.key(),
+                &ctx.accounts.vault.key(),
+                amount,
+            ),
+            &[
+                ctx.accounts.caller.to_account_info(),
+                ctx.accounts.vault.to_account_info(),
+            ],
+        )?;
+
+        ctx.accounts.vault.total_deposited += amount;
+
+        emit!(DepositEvent {
+            from: ctx.accounts.caller.key(),
+            amount,
+            vault_total: ctx.accounts.vault.total_deposited,
+        });
+
+        msg!("Deposited {} lamports into shared vault", amount);
+        Ok(())
+    }
+
+    pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
+        require!(amount > 0, AppError::AmountZero);
+        require!(ctx.accounts.vault.total_deposited >= amount, AppError::InsufficientFunds);
+
+        // check vault won't drop below rent-exempt minimum
+        let rent = Rent::get()?;
+        let rent_exempt_min = rent.minimum_balance(
+            ctx.accounts.vault.to_account_info().data_len()
+        );
+        let current_lamports = ctx.accounts.vault.to_account_info().lamports();
+        require!(current_lamports >= amount + rent_exempt_min, AppError::BelowRentExempt);
+
+        // vault → user: vault is owned by our program so we move lamports directly
+        **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= amount;
+        **ctx.accounts.caller.to_account_info().try_borrow_mut_lamports()? += amount;
+
+        ctx.accounts.vault.total_deposited -= amount;
+
+        emit!(WithdrawEvent {
+            to: ctx.accounts.caller.key(),
+            amount,
+            vault_total: ctx.accounts.vault.total_deposited,
+        });
+
+        msg!("Withdrew {} lamports from shared vault", amount);
         Ok(())
     }
 
